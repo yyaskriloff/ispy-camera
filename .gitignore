@@ -74,3 +74,4 @@ kotlin-ide/
 **/xcuserdata
 .test-federation.*
 .vscode/
+local.properties

@@ -1,4 +1,4 @@
-package com.ispy.camera
+package com.ispy.camera.debug
 
 import android.media.MediaCodec
 import android.media.MediaCodecInfo

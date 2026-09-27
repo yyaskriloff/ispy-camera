@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">iSpy Camera</string>
+    <string name="notification_channel_name">Camera streaming</string>
+    <string name="notification_channel_desc">Ongoing baby-monitor stream status</string>
+    <string name="notification_title">iSpy streaming</string>
+    <string name="btn_start">Start streaming</string>
+    <string name="btn_stop">Stop streaming</string>
+    <string name="btn_open_settings">Open settings</string>
+    <string name="permission_rationale">Camera, microphone, and notification access are required to stream.</string>
+    <string name="permission_denied">Permissions denied. Streaming cannot start.</string>
+    <string name="permission_permanently_denied">Permissions permanently denied. Enable Camera, Microphone, and Notifications in Settings.</string>
+    <string name="status_idle">Idle — grant permissions and tap Start</string>
+    <string name="status_waiting_permissions">Waiting for permissions…</string>
+    <string name="status_starting">Starting stream…</string>
+    <string name="status_streaming">Streaming — waiting for viewer</string>
+    <string name="status_viewer_connected">Viewer connected</string>
+    <string name="status_error">Error: %1$s</string>
+    <string name="label_pin">PIN</string>
+    <string name="label_url">LAN URL</string>
+    <string name="label_status">Status</string>
+    <string name="waiting_wifi">Waiting for Wi‑Fi IP…</string>
+</resources>

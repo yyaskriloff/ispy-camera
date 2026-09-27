@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>iSpy Viewer</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #121212;
+      --fg: #f5f5f5;
+      --muted: #b0b0b0;
+      --accent: #3ddc84;
+      --err: #cf6679;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 12px 16px;
+      border-bottom: 1px solid #333;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    h1 { font-size: 1.1rem; margin: 0 12px 0 0; color: var(--accent); }
+    input, button {
+      font: inherit;
+      padding: 8px 12px;
+      border-radius: 6px;
+      border: 1px solid #444;
+      background: #1e1e1e;
+      color: var(--fg);
+    }
+    button {
+      background: var(--accent);
+      color: #111;
+      border: none;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: default; }
+    #status { color: var(--muted); font-size: 0.9rem; margin-left: auto; }
+    #status.err { color: var(--err); }
+    main { flex: 1; display: flex; background: #000; }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>iSpy Viewer</h1>
+    <label>
+      PIN
+      <input id="pin" type="password" inputmode="numeric" maxlength="8" placeholder="****" />
+    </label>
+    <button id="connectBtn">Connect</button>
+    <button id="disconnectBtn" disabled>Disconnect</button>
+    <span id="status">Disconnected</span>
+  </header>
+  <main>
+    <video id="remote" autoplay playsinline controls></video>
+  </main>
+  <script>
+    const statusEl = document.getElementById('status');
+    const videoEl = document.getElementById('remote');
+    const pinEl = document.getElementById('pin');
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+
+    let pc = null;
+    let ws = null;
+    let reconnectTimer = null;
+    let intentionalClose = false;
+
+    function setStatus(text, isErr) {
+      statusEl.textContent = text;
+      statusEl.classList.toggle('err', !!isErr);
+    }
+
+    function wsUrl() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      return proto + '//' + location.host + '/ws';
+    }
+
+    function send(obj) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(obj));
+      }
+    }
+
+    async function ensurePc() {
+      if (pc) return pc;
+      pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      });
+      pc.onicecandidate = (ev) => {
+        if (ev.candidate) {
+          send({
+            type: 'ice',
+            candidate: ev.candidate.candidate,
+            sdpMid: ev.candidate.sdpMid,
+            sdpMLineIndex: ev.candidate.sdpMLineIndex
+          });
+        }
+      };
+      pc.onconnectionstatechange = () => {
+        setStatus('Peer: ' + pc.connectionState);
+        if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+          scheduleReconnect();
+        }
+      };
+      pc.ontrack = (ev) => {
+        if (videoEl.srcObject !== ev.streams[0]) {
+          videoEl.srcObject = ev.streams[0];
+        }
+      };
+      return pc;
+    }
+
+    function cleanupPc() {
+      if (pc) {
+        pc.onicecandidate = null;
+        pc.ontrack = null;
+        pc.close();
+        pc = null;
+      }
+      videoEl.srcObject = null;
+    }
+
+    function scheduleReconnect() {
+      if (intentionalClose) return;
+      if (reconnectTimer) return;
+      setStatus('Reconnecting…');
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connect(true);
+      }, 2000);
+    }
+
+    async function handleMessage(msg) {
+      switch (msg.type) {
+        case 'welcome':
+          setStatus('Authenticated — waiting for offer');
+          break;
+        case 'offer': {
+          const peer = await ensurePc();
+          await peer.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
+          const answer = await peer.createAnswer();
+          await peer.setLocalDescription(answer);
+          send({ type: 'answer', sdp: answer.sdp });
+          setStatus('Answer sent');
+          break;
+        }
+        case 'ice':
+          if (pc && msg.candidate) {
+            try {
+              await pc.addIceCandidate({
+                candidate: msg.candidate,
+                sdpMid: msg.sdpMid,
+                sdpMLineIndex: msg.sdpMLineIndex
+              });
+            } catch (e) {
+              console.warn('ICE add failed', e);
+            }
+          }
+          break;
+        case 'error':
+          setStatus('Error: ' + (msg.message || msg.code || 'unknown'), true);
+          if (msg.code === 'bad_pin') {
+            intentionalClose = true;
+            disconnect();
+          }
+          break;
+        case 'bye':
+          setStatus('Camera ended session');
+          cleanupPc();
+          scheduleReconnect();
+          break;
+        default:
+          console.log('unknown', msg);
+      }
+    }
+
+    function connect(isReconnect) {
+      intentionalClose = false;
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        if (!isReconnect) return;
+        try { ws.close(); } catch (_) {}
+      }
+      cleanupPc();
+      const pin = pinEl.value.trim();
+      if (!pin) {
+        setStatus('Enter PIN', true);
+        return;
+      }
+      setStatus(isReconnect ? 'Reconnecting…' : 'Connecting…');
+      connectBtn.disabled = true;
+      disconnectBtn.disabled = false;
+      ws = new WebSocket(wsUrl());
+      ws.onopen = () => {
+        send({ type: 'hello', role: 'viewer', pin: pin });
+        setStatus('Connected — authenticating');
+      };
+      ws.onmessage = async (ev) => {
+        try {
+          await handleMessage(JSON.parse(ev.data));
+        } catch (e) {
+          console.error(e);
+          setStatus('Message error', true);
+        }
+      };
+      ws.onclose = () => {
+        setStatus('Disconnected');
+        connectBtn.disabled = false;
+        disconnectBtn.disabled = true;
+        cleanupPc();
+        if (!intentionalClose) scheduleReconnect();
+      };
+      ws.onerror = () => setStatus('WebSocket error', true);
+    }
+
+    function disconnect() {
+      intentionalClose = true;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      if (ws) {
+        try { ws.close(); } catch (_) {}
+        ws = null;
+      }
+      cleanupPc();
+      connectBtn.disabled = false;
+      disconnectBtn.disabled = true;
+      setStatus('Disconnected');
+    }
+
+    connectBtn.addEventListener('click', () => connect(false));
+    disconnectBtn.addEventListener('click', disconnect);
+    pinEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') connect(false);
+    });
+  </script>
+</body>
+</html>

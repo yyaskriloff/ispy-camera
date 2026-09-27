@@ -1,4 +1,4 @@
-package com.ispy.camera
+package com.ispy.camera.debug
 
 import android.graphics.ImageFormat
 import android.media.ImageReader
